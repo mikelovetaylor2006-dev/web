@@ -1,0 +1,58 @@
+import { GoogleGenAI } from '@google/genai';
+import Replicate from 'replicate';
+
+export default async function handler(req, res) {
+  // Chỉ nhận method POST
+  if (req.method !== 'POST') {
+    return res.status(405).json({ success: false, error: 'Method not allowed' });
+  }
+
+  const { script } = req.body;
+  if (!script || script.trim() === '') {
+    return res.status(400).json({ success: false, error: 'Vui lòng nhập kịch bản đầu vào' });
+  }
+
+  try {
+    // 1. Phân tích kịch bản bằng Gemini 2.5 Flash
+    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    const promptSystem = `Bạn là một đạo diễn phim AI chuyên nghiệp. Hãy chuyển đổi kịch bản sau thành 1 câu Visual Prompt bằng tiếng Anh cực kỳ chi tiết (mô tả góc quay, ánh sáng, chất lượng 8k, phong cách điện ảnh) để đưa vào mô hình sinh video AI Text-to-Video: "${script}"`;
+    
+    const geminiResponse = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: promptSystem,
+    });
+    
+    const generatedPrompt = geminiResponse.text.trim();
+
+    // 2. Gọi Replicate API để khởi tạo Task sinh Video
+    const replicate = new Replicate({
+      auth: process.env.REPLICATE_API_TOKEN,
+    });
+
+    // Sử dụng model Wan2.1 (hoặc CogVideoX) trên Replicate
+    const prediction = await replicate.predictions.create({
+      // Model Wan2.1 1.3B / 14B Text-to-Video trên Replicate
+      version: "9f7709c00b01e7e40822363152594a11c1e5a519bfb4b5768565b4c4897e93a6",
+      input: {
+        prompt: generatedPrompt,
+        num_frames: 81,
+        frames_per_second: 16
+      }
+    });
+
+    // 3. Trả kết quả về cho Frontend
+    return res.status(200).json({ 
+      success: true, 
+      predictionId: prediction.id,
+      promptUsed: generatedPrompt,
+      status: prediction.status
+    });
+
+  } catch (error) {
+    console.error('Lỗi xử lý Server:', error);
+    return res.status(500).json({ 
+      success: false, 
+      error: error.message || 'Đã có lỗi xảy ra ở máy chủ' 
+    });
+  }
+}
